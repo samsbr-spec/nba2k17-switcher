@@ -1,0 +1,6 @@
+# Per-PC state: parked saves, history zips, log, setup state
+data/
+# Built on each PC by Install.cmd
+NBA 2K17 Launcher.exe
+# Release zips are attached to GitHub Releases, not committed
+*.zip
