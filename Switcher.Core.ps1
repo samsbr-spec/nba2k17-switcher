@@ -391,7 +391,7 @@ function New-ReleaseZip {
     $inner = Join-Path $stage 'NBA2K17-Switcher'
     New-Item -ItemType Directory -Force $inner | Out-Null
     foreach ($e in (Get-ChildItem -Force $script:Root)) {
-        if ($e.Name -eq 'data' -or $e.Name -ieq 'NBA 2K17 Launcher.exe' -or $e.Name -like '*.zip') { continue }
+        if ($e.Name -in 'data', '.git' -or $e.Name -ieq 'NBA 2K17 Launcher.exe' -or $e.Name -like '*.zip') { continue }
         Copy-Item -LiteralPath $e.FullName -Destination $inner -Recurse -Force
     }
     if (Test-Path $out) { Remove-Item $out -Force }
