@@ -13,14 +13,30 @@ Revival's cloud gets Back2Back's players (they show up as 55 OVR), and the other
 The launcher parks one client's saves and puts the other client's saves in place before it
 starts the client. One click, no thinking.
 
-WHAT YOU NEED FIRST
--------------------
-1. Both clients installed and signed in (Steam linked; Back2Back also needs its Discord link).
-2. Each client has started the game at least once (so the Steam save folder exists).
-3. Two game folders: one for Revival, one for Back2Back. Back2Back's own setup checklist insists
-   on this ("Another client also uses this folder"). Split.cmd (or the "Split game folder" button)
-   does it for you. If both clients share one folder they overwrite each other's loader files
-   on every launch.
+STARTING FROM SCRATCH (the smooth order)
+----------------------------------------
+1. Steam installed and signed in, and your NBA 2K17 game folder on disk.
+2. Install Revival, sign in, add NBA 2K17 (point it at NBA2K17.exe in your game folder).
+3. Unzip this launcher and run Install.cmd. It sees Revival's game folder and no Back2Back yet,
+   and offers to prepare Back2Back's own copy of the game right away ("<folder>-Back2Back",
+   5-15 minutes, ~70 GB free needed). Say yes. It also puts the icons on your desktop.
+4. Install Back2Back, sign in with Steam, link Discord and join their server. When it asks for the
+   game, pick NBA2K17.exe inside the "-Back2Back" folder. Its checklist is green from the start.
+   Then click "Re-run setup" in the launcher window (or run Install.cmd again).
+5. Open "NBA 2K17 Launcher" and click a tile. The first launch of each client restarts Steam once
+   (the client registers itself) and Windows may ask to allow the game through the firewall: Allow.
+You never need to start the game by hand first; the launcher creates the Steam save folder itself.
+
+Already have both clients installed on one game folder? Also fine: Install.cmd offers to copy the
+game for Back2Back and points Back2Back at the copy; afterwards press FIX OTHER CLIENT CONFLICT
+and QUICK CHECK in Back2Back's Settings once.
+
+WHAT YOU NEED (the launcher cannot do these for you)
+----------------------------------------------------
+- Steam, signed in. Both clients run the game through Steam and tie progress to your Steam account.
+- The clients themselves, installed and signed in: Revival (Steam link) and Back2Back (Steam link,
+  Discord link, membership of their Discord server). These are accounts, so they are yours to do.
+- Two game folders, one per client. The launcher makes the second one (see above).
 
 INSTALL (2 minutes, plus a copy of the game if needed)
 -----------------------------------------------------
@@ -29,7 +45,9 @@ INSTALL (2 minutes, plus a copy of the game if needed)
    Or right-click the zip before unzipping > Properties > tick Unblock.)
 2. Close both launchers and run Install.cmd. It finds Steam, the save folder and both launchers,
    and then:
-   - If both clients still use the same game folder (the normal state after installing both), it
+   - If Revival is set up and Back2Back isn't yet, it offers to prepare Back2Back's copy of the
+     game now (see "Starting from scratch").
+   - If both clients use the same game folder (the normal state after installing both), it
      offers to fix that on the spot: it copies the game to "<folder>-Back2Back" (5-15 minutes,
      needs ~70 GB free), points Back2Back at the copy and takes Back2Back's files out of the
      original. Afterwards open Back2Back > Settings, press FIX OTHER CLIENT CONFLICT, then

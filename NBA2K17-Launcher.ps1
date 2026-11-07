@@ -380,16 +380,27 @@ function Refresh-View {
                 $savesTb.Text = if ($parked -eq 'empty') { 'ON THE BENCH: nothing parked yet (first launch pulls its cloud copy)' } else { "ON THE BENCH: parked and ready ($parked)" }
             }
             $exe = if ($c -eq 'Revival') { $i.revivalExe } else { $i.back2backExe }
-            $hintTb.Text = if ($exe) { '' } else { "$c is not installed on this PC." }
+            $game = if ($c -eq 'Revival') { $i.revivalGame } else { $i.back2backGame }
+            $hintTb.Text = if (-not $exe) {
+                if ($c -eq 'Back2Back' -and $i.plan.kind -eq 'repoint') { "Not installed yet. Install Back2Back, and when it asks for the game pick NBA2K17.exe in $($i.plan.target). Then click 'Re-run setup'." }
+                else { "Not installed yet. Install $c, point it at NBA2K17.exe, then click 'Re-run setup'." }
+            } elseif (-not $game) { "Installed, but it has no game folder yet. Open $c once and point it at NBA2K17.exe, then click 'Re-run setup'." }
+            else { '' }
         }
         $gameMsg = if ($i.gameRunning) { 'NBA 2K17 is running. Finish the game before switching.' } elseif ($i.current -eq 'Back2Back' -and $i.b2bUpload -eq 'busy') { 'Back2Back is still saving to its cloud. Wait for "Progress saved" before switching.' } else { '' }
-        $enabled = -not $i.gameRunning -and -not $i.shared
-        $RevivalTile.IsEnabled = $enabled -and [bool]$i.revivalExe
-        $Back2BackTile.IsEnabled = $enabled -and [bool]$i.back2backExe
+        $foldersOk = $i.plan.kind -eq 'none'
+        $enabled = -not $i.gameRunning -and $foldersOk
+        $RevivalTile.IsEnabled = $enabled -and [bool]$i.revivalExe -and [bool]$i.revivalGame
+        $Back2BackTile.IsEnabled = $enabled -and [bool]$i.back2backExe -and [bool]$i.back2backGame
         $line = "Suited up for: $($i.current)"
         if ($i.lastSwitch) { $line += "   (since $(([datetime]$i.lastSwitch).ToString('ddd HH:mm')))" }
         if ($gameMsg) { $line += "`n$gameMsg" }
-        if ($i.shared) { $line += "`nOne-time setup left: both clients still use the SAME game folder. Close both launchers, then hit 'Split game folder' below. The tiles unlock when it's done." }
+        switch ($i.plan.kind) {
+            'shared'  { $line += "`nOne-time setup left: both clients still use the SAME game folder. Close both launchers, then hit 'Split game folder' below. The tiles unlock when it's done." }
+            'prepare' { $line += "`nOne-time setup left: Back2Back isn't set up yet. 'Split game folder' prepares its own copy of the game now, so the two never share a folder." }
+            'repoint' { $line += "`nBack2Back's copy of the game is ready at $($i.plan.target). Point Back2Back at the NBA2K17.exe in it, then click 'Re-run setup'." }
+            'wait'    { $line += "`n$($i.plan.note)" }
+        }
         $StatusText.Text = $line
     } catch {
         $StatusText.Text = "Could not read the current state: $($_.Exception.Message)"
@@ -405,9 +416,14 @@ function Start-SplitConsole {
 function Run-Setup {
     $i = Get-StatusInfo
     $splitOffered = $false
-    if ($i.shared) {
+    if ($i.plan.kind -eq 'shared') {
         $c = Show-Choice ("One-time setup first: Revival and Back2Back both use the same game folder`n($($i.revivalGame)).`n`nThey overwrite each other's files there on every launch, so Back2Back needs its own copy of the game. A console window will copy it (5-15 minutes); both launchers and the game must be closed first.") @('Copy it now', 'Later')
         if ($c -eq 0) { Start-SplitConsole; $splitOffered = $true }
+    } elseif ($i.plan.kind -eq 'prepare') {
+        $c = Show-Choice ("One-time setup first: Revival uses`n$($i.plan.source)`nand Back2Back isn't set up yet.`n`nBack2Back should get its own copy of the game so the two never share a folder. A console window can copy it now (5-15 minutes) to`n$($i.plan.target)`nand when you install Back2Back you just pick the NBA2K17.exe in there.") @('Copy it now', 'Later')
+        if ($c -eq 0) { Start-SplitConsole }
+    } elseif ($i.plan.kind -eq 'wait') {
+        [System.Windows.MessageBox]::Show($window, $i.plan.note, 'NBA 2K17 Launcher', 'OK', 'Information') | Out-Null
     }
     $choice = Show-Choice ("The Steam save folder currently holds: $($i.remoteDesc)`n`nWhich client did you play LAST on this PC? (That tells the launcher whose saves these are. Pick 'Not sure' if you've been switching by hand; each client will then pull its own cloud copy the first time.)") @('Revival', 'Back2Back', 'Not sure')
     if ($choice -lt 0) { return }
@@ -447,12 +463,24 @@ $RevivalTile.Add_Click({ Start-Client 'Revival' })
 $Back2BackTile.Add_Click({ Start-Client 'Back2Back' })
 $SetupButton.Add_Click({ Run-Setup })
 $SplitButton.Add_Click({
-    if (Test-SharedGameFolder) {
-        $ok = [System.Windows.MessageBox]::Show($window, "This copies the whole game folder (5-15 minutes) so Back2Back gets its own copy, then points Back2Back at it. Both launchers and the game must be closed.`n`nA console window will show progress. Start now?", 'NBA 2K17 Launcher', 'YesNo', 'Question')
-        if ($ok -eq 'Yes') { Start-SplitConsole; [System.Windows.MessageBox]::Show($window, (Get-SplitAdvice), 'NBA 2K17 Launcher', 'OK', 'Information') | Out-Null }
-    } else {
-        [System.Windows.MessageBox]::Show($window, "Already split: Revival and Back2Back use different game folders. Nothing to do.", 'NBA 2K17 Launcher', 'OK', 'Information') | Out-Null
+    $plan = Get-SplitPlan
+    switch ($plan.kind) {
+        'shared' {
+            $ok = [System.Windows.MessageBox]::Show($window, "This copies the whole game folder (5-15 minutes) so Back2Back gets its own copy, then points Back2Back at it. Both launchers and the game must be closed.`n`nA console window will show progress. Start now?", 'NBA 2K17 Launcher', 'YesNo', 'Question')
+            if ($ok -eq 'Yes') { Start-SplitConsole; [System.Windows.MessageBox]::Show($window, (Get-SplitAdvice), 'NBA 2K17 Launcher', 'OK', 'Information') | Out-Null }
+        }
+        'prepare' {
+            $ok = [System.Windows.MessageBox]::Show($window, "This copies the game (5-15 minutes) to`n$($plan.target)`nso Back2Back can use its own copy. When you install Back2Back, pick the NBA2K17.exe in that folder.`n`nStart now?", 'NBA 2K17 Launcher', 'YesNo', 'Question')
+            if ($ok -eq 'Yes') { Start-SplitConsole }
+        }
+        'repoint' {
+            $ok = [System.Windows.MessageBox]::Show($window, "Back2Back's copy already exists at`n$($plan.target)`n`nPoint Back2Back at it now? (Both launchers must be closed.)", 'NBA 2K17 Launcher', 'YesNo', 'Question')
+            if ($ok -eq 'Yes') { Start-SplitConsole }
+        }
+        'none' { [System.Windows.MessageBox]::Show($window, "Already split: Revival and Back2Back use different game folders. Nothing to do.", 'NBA 2K17 Launcher', 'OK', 'Information') | Out-Null }
+        default { [System.Windows.MessageBox]::Show($window, $plan.note, 'NBA 2K17 Launcher', 'OK', 'Information') | Out-Null }
     }
+    Refresh-View
 })
 $DataButton.Add_Click({ if (-not (Test-Path $script:AppDir)) { New-Item -ItemType Directory -Force $script:AppDir | Out-Null }; Start-Process explorer.exe $script:AppDir })
 $HelpButton.Add_Click({ $readme = Join-Path $script:Root 'README.txt'; if (Test-Path $readme) { Start-Process notepad.exe "`"$readme`"" } })

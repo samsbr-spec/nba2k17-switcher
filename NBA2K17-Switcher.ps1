@@ -20,13 +20,16 @@ param(
     [switch]$CheckUpdate,
     [switch]$Update,
     [switch]$MakeZip,
+    [string]$TestSplitSource,
+    [string]$TestSplitTarget,
     [switch]$Force
 )
 $ErrorActionPreference = 'Stop'
+$wantForce = [bool]$Force   # read before loading the engine: its startup resets a variable of the same name
 . (Join-Path $PSScriptRoot 'Switcher.Core.ps1')
 
 $interactive = ($Host.Name -eq 'ConsoleHost') -and -not [Console]::IsInputRedirected
-$script:Force = [bool]$Force
+$script:Force = $wantForce
 $script:Say = {
     param($Message, $Level)
     switch ($Level) {
@@ -68,7 +71,12 @@ function Show-Status {
         Write-Host 'Not set up yet. Run Install.cmd.' -ForegroundColor Yellow
     }
     Write-Host ("Running now:        game={0} launchers={1}" -f $(if ($i.gameRunning) { 'yes' } else { 'no' }), $(if ($i.launchers.Count) { $i.launchers -join ', ' } else { 'none' }))
-    if ($i.shared) { Write-Host 'WARNING: both clients use the SAME game folder. Run Split.cmd once to give Back2Back its own copy.' -ForegroundColor Yellow }
+    switch ($i.plan.kind) {
+        'shared'  { Write-Host 'WARNING: both clients use the SAME game folder. Run Install.cmd or Split.cmd once to give Back2Back its own copy.' -ForegroundColor Yellow }
+        'prepare' { Write-Host "Back2Back is not set up yet. Install.cmd can prepare its copy of the game now ($($i.plan.target)) so the two never share a folder." -ForegroundColor Yellow }
+        'repoint' { Write-Host "A Back2Back copy exists at $($i.plan.target). Point Back2Back at the NBA2K17.exe in it (Install.cmd does this when Back2Back is installed)." -ForegroundColor Yellow }
+        'wait'    { Write-Host $i.plan.note -ForegroundColor Yellow }
+    }
 }
 
 try {
@@ -85,7 +93,7 @@ try {
         Pause-Console
         exit 0
     }
-    if ($Split) { Invoke-Split -DryRun:$DryRun; Pause-Console; exit 0 }
+    if ($Split) { Invoke-Split -DryRun:$DryRun -Confirmed:$Force -TestSource $TestSplitSource -TestTarget $TestSplitTarget; Pause-Console; exit 0 }
     if ($MakeZip) {
         $out = New-ReleaseZip
         Write-Host "Release zip ready: $out" -ForegroundColor Green

@@ -53,10 +53,21 @@ function Get-ActiveSteamAccount {
     try { return [int](Get-ItemProperty 'HKCU:\Software\Valve\Steam\ActiveProcess' -ErrorAction Stop).ActiveUser } catch { return 0 }
 }
 
-function Find-RemoteFolder([string]$SteamPath) {
+function Find-RemoteFolder([string]$SteamPath, [switch]$CreateIfMissing) {
     $userdata = Join-Path $SteamPath 'userdata'
     if (-not (Test-Path $userdata)) { return $null }
     $candidates = @(Get-ChildItem $userdata -Directory | Where-Object { Test-Path (Join-Path $_.FullName '480\remote') })
+    if ($candidates.Count -eq 0 -and $CreateIfMissing) {
+        # Nobody has run the game through a client yet. Steam creates this folder on the first run; we can make it now
+        # for the signed-in account so setup can finish before that first run.
+        $active = Get-ActiveSteamAccount
+        if ($active -gt 0 -and (Test-Path (Join-Path $userdata "$active"))) {
+            $r = Join-Path $userdata "$active\480\remote"
+            New-Item -ItemType Directory -Force $r | Out-Null
+            Write-Log "Created the Steam save folder for app 480 ($r); the game fills it on its first run."
+            return $r
+        }
+    }
     if ($candidates.Count -eq 0) { return $null }
     $active = Get-ActiveSteamAccount
     if ($active -gt 0) {
@@ -425,6 +436,7 @@ function Get-StatusInfo {
     $info.revivalGame = Get-ClientGameFolder 'Revival'
     $info.back2backGame = Get-ClientGameFolder 'Back2Back'
     $info.shared = Test-SharedGameFolder
+    $info.plan = Get-SplitPlan
     $info.state = Load-State
     $info.current = if ($info.state) { $info.state.current } else { 'not set up' }
     $info.lastSwitch = if ($info.state) { $info.state.lastSwitch } else { '' }
@@ -441,15 +453,25 @@ function Invoke-Setup([string]$CurrentClient, [string]$SeedRevival, [string]$See
     Write-Log "NBA 2K17 Switcher $script:Version - setup"
     $steam = Get-SteamPath
     if (-not $steam) { Fail 'Steam was not found on this PC.' }
-    $remote = Find-RemoteFolder $steam
-    if (-not $remote) { Fail "No NBA 2K17 save folder found under $steam\userdata. Start the game once through either client, then run setup again." }
+    $remote = Find-RemoteFolder $steam -CreateIfMissing
+    if (-not $remote) { Fail "No NBA 2K17 save folder found under $steam\userdata and Steam is not signed in, so it could not be created. Sign in to Steam, then run setup again." }
     Write-Log "Steam save folder: $remote"
-    if ((Test-SharedGameFolder) -and -not $SkipSplitOffer) {
-        Write-Log "Both clients use the same game folder ($(Get-ClientGameFolder 'Revival')). They overwrite each other's files there on every launch, so Back2Back needs its own copy of the game." 'WARN'
-        if (& $script:AskYesNo 'Give Back2Back its own copy of the game now? (Both launchers and the game must be closed. 5-15 minutes.)') {
-            try { Invoke-Split -Confirmed } catch { Write-Log ($_.Exception.Message -replace '^SWITCHER: ', '') 'WARN'; Write-Log 'Setup continues; run Split.cmd later or click "Split game folder" in the launcher.' 'WARN' }
-        } else {
-            Write-Log 'Skipped. The launcher will keep its tiles off until the split is done (Split.cmd, or "Split game folder" in the window).' 'WARN'
+    if (-not $SkipSplitOffer) {
+        $plan = Get-SplitPlan
+        if ($plan.kind -eq 'shared') {
+            Write-Log "Both clients use the same game folder ($($plan.source)). They overwrite each other's files there on every launch, so Back2Back needs its own copy of the game." 'WARN'
+            if (& $script:AskYesNo 'Give Back2Back its own copy of the game now? (Both launchers and the game must be closed. 5-15 minutes.)') {
+                try { Invoke-Split -Confirmed } catch { Write-Log ($_.Exception.Message -replace '^SWITCHER: ', '') 'WARN'; Write-Log 'Setup continues; run Split.cmd later or click "Split game folder" in the launcher.' 'WARN' }
+            } else {
+                Write-Log 'Skipped. The launcher keeps its tiles off until the split is done (Split.cmd, or "Split game folder" in the window).' 'WARN'
+            }
+        } elseif ($plan.kind -eq 'prepare') {
+            Write-Log "Revival uses $($plan.source) and Back2Back is not set up yet. Back2Back should get its own copy of the game so the two never share a folder." 'WARN'
+            if (& $script:AskYesNo "Prepare Back2Back's copy now ($($plan.target))? (5-15 minutes.)") {
+                try { Invoke-Split -Confirmed } catch { Write-Log ($_.Exception.Message -replace '^SWITCHER: ', '') 'WARN' }
+            } else {
+                Write-Log 'Skipped. When you install Back2Back, either pick the original folder and run Split.cmd afterwards, or run Split.cmd first and pick the -Back2Back copy.' 'WARN'
+            }
         }
     }
     $launchers = @{}
@@ -466,6 +488,7 @@ function Invoke-Setup([string]$CurrentClient, [string]$SeedRevival, [string]$See
 
     $cur = $CurrentClient
     if (-not $cur) { $cur = 'Unknown' }
+    if ((Get-Entries $remote).Count -eq 0) { $cur = 'Unknown'; Write-Log 'The Steam save folder is empty (nothing played yet), so there is nothing to park: each client fills it on its first launch.' }
     if ($cur -ne 'Unknown') {
         $slot = Join-Path $script:ParkingRoot "$cur\remote"
         if ((Get-Entries $remote).Count -gt 0) { Reset-Folder $slot; Copy-Contents $remote $slot; Write-Log "Took a copy of the current saves as $cur's parked set." }
@@ -563,21 +586,41 @@ function Invoke-Play([string]$Target) {
     return @{ started = $true; advice = $advice; switched = $true }
 }
 
-function Invoke-Split([switch]$DryRun, [switch]$Confirmed) {
-    Write-Log "NBA 2K17 Switcher $script:Version - give Back2Back its own game folder"
+function Get-SplitPlan {
+    # What the folder situation needs: 'none' (separate already), 'shared' (both point at one folder),
+    # 'prepare' (Revival known, Back2Back not set up yet), 'repoint' (a -Back2Back copy exists already), or 'wait'.
     $rev = Get-ClientGameFolder 'Revival'
     $b2b = Get-ClientGameFolder 'Back2Back'
-    if (-not $b2b) { Fail 'Back2Back has no game folder set yet. Open Back2Back once, let it find NBA 2K17, close it, then run Split again.' }
-    if (-not $rev) { Fail 'Revival has no game registered yet. Add NBA 2K17 in Revival once, close it, then run Split again.' }
-    if ($rev.TrimEnd('\') -ine $b2b.TrimEnd('\')) {
-        Write-Log "Already split. Revival uses $rev and Back2Back uses $b2b. Nothing to do." 'OK'
+    $plan = @{ kind = 'wait'; source = $rev; target = $null; back2back = $b2b; note = '' }
+    if (-not $rev -and -not $b2b) { $plan.note = 'Neither client has a game folder yet. Install Revival (or Back2Back), point it at NBA2K17.exe, then run setup again.'; return $plan }
+    if ($rev -and $b2b -and ($rev.TrimEnd('\') -ine $b2b.TrimEnd('\'))) { $plan.kind = 'none'; $plan.target = $b2b; return $plan }
+    if (-not $rev) { $plan.note = "Back2Back uses $b2b. Install Revival and point it at that same folder; setup then gives Back2Back its own copy."; return $plan }
+    $src = $rev.TrimEnd('\'); $dst = "$src-Back2Back"
+    $plan.source = $src; $plan.target = $dst
+    if ((Test-Path (Join-Path $dst 'NBA2K17.exe'))) { $plan.kind = 'repoint'; return $plan }   # copy exists; Back2Back just needs pointing at it
+    if ($b2b) { $plan.kind = 'shared' } else { $plan.kind = 'prepare' }
+    return $plan
+}
+
+function Invoke-Split([switch]$DryRun, [switch]$Confirmed, [string]$TestSource, [string]$TestTarget) {
+    Write-Log "NBA 2K17 Switcher $script:Version - give Back2Back its own game folder"
+    $plan = Get-SplitPlan
+    if ($TestSource) { $plan = @{ kind = 'prepare'; source = $TestSource.TrimEnd('\'); target = $TestTarget; back2back = $null } }   # self-test on a scratch folder; never touches the clients
+    if ($plan.kind -eq 'none') { Write-Log "Already split. Revival uses $($plan.source) and Back2Back uses $($plan.back2back). Nothing to do." 'OK'; return }
+    if ($plan.kind -eq 'wait') { Fail $plan.note }
+    $src = $plan.source
+    $dst = $plan.target
+    $b2bConfigured = [bool]$plan.back2back
+    if (-not $TestSource -and ((Get-GameProcess) -or (Get-LauncherProcesses))) { Fail 'Close NBA 2K17, Revival and Back2Back first, then run Split again.' }
+    if (-not (Test-Path (Join-Path $src 'NBA2K17.exe'))) { Fail "NBA2K17.exe not found in $src" }
+    if ($plan.kind -eq 'repoint') {
+        Write-Log "A Back2Back copy already exists at $dst; no copying needed." 'OK'
+        if ($DryRun) { Write-Log 'Dry run: nothing changed.' 'WARN'; return }
+        if ($b2bConfigured) { Set-Back2BackGameFolder $dst; Clean-RevivalFolder $src }
+        else { Write-Log "When Back2Back asks for the game, pick NBA2K17.exe in $dst" 'OK' }
         return
     }
-    $src = $rev.TrimEnd('\')
-    $dst = "$src-Back2Back"
-    if ((Get-GameProcess) -or (Get-LauncherProcesses)) { Fail 'Close NBA 2K17, Revival and Back2Back first, then run Split again.' }
-    if (-not (Test-Path (Join-Path $src 'NBA2K17.exe'))) { Fail "NBA2K17.exe not found in $src" }
-    if ((Test-Path $dst) -and ((Get-Entries $dst).Count -gt 0)) { Fail "$dst already exists and is not empty. Remove or rename it first." }
+    if ((Test-Path $dst) -and ((Get-Entries $dst).Count -gt 0)) { Fail "$dst already exists and is not empty, but has no NBA2K17.exe. Remove or rename it first." }
 
     $revivalFiles = 'RV', 'dinput8_shim.ini', '.revival-*', 'revival_loader.log', 'icon.ico', 'NBA2K17PC_meta.*', 'SYNC.BIN', '*.zip', '*.rar', '*.7z'
     $revivalDirs = '.rebirth2k_backups', '_Redist'
@@ -605,30 +648,43 @@ function Invoke-Split([switch]$DryRun, [switch]$Confirmed) {
     if ($exeSrc.Length -ne $exeDst.Length) { Fail 'The copied NBA2K17.exe does not match the original. Stopping before changing any settings.' }
     Write-Log "Copy finished: $dst" 'OK'
 
-    $cfg = Join-Path $env:LOCALAPPDATA 'Rebirth2K17\config.json'
-    $json = Get-Content $cfg -Raw | ConvertFrom-Json
-    $h = @{}; foreach ($pp in $json.PSObject.Properties) { $h[$pp.Name] = $pp.Value }
-    $h['game_path'] = (Join-Path $dst 'NBA2K17.exe')
-    Copy-Item $cfg "$cfg.before-split" -Force
-    ($h | ConvertTo-Json -Compress) | Set-Content $cfg -Encoding UTF8
-    Write-Log "Back2Back now points at $dst\NBA2K17.exe" 'OK'
+    if ($b2bConfigured) {
+        Set-Back2BackGameFolder $dst
+        Clean-RevivalFolder $src
+        Write-Log 'Two things to do by hand now:'
+        Write-Log '  1. Open Back2Back > Settings: "Your game" should show the new -Back2Back folder. Press FIX OTHER CLIENT CONFLICT (Steam restarts), then QUICK CHECK. Set Window Mode to Fullscreen if the picture looks soft.'
+        Write-Log '  2. Start each client once. Each registers its own Steam shortcut (Steam restarts once per client); if Windows asks to allow the game through the firewall, click Allow.'
+    } else {
+        Write-Log "Back2Back's copy is ready. When you install Back2Back and it asks for the game, pick NBA2K17.exe in $dst" 'OK'
+        Write-Log 'Then click "Re-run setup" (or run Install.cmd again) so the launcher picks Back2Back up.'
+    }
+}
 
-    foreach ($pat in $b2bFiles) { Get-ChildItem -Path $src -Filter $pat -File -Force -ErrorAction SilentlyContinue | Remove-Item -Force }
-    $bak = Get-ChildItem (Join-Path $src '.rebirth2k_backups\native-setup') -Filter 'dinput8.dll.*' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
-    if ($bak) { Copy-Item $bak.FullName (Join-Path $src 'dinput8.dll') -Force; Write-Log "Restored Revival's dinput8.dll from Back2Back's backup." }
-    foreach ($d in $b2bDirs) { $dd = Join-Path $src $d; if (Test-Path $dd) { Remove-Item $dd -Recurse -Force } }
+function Set-Back2BackGameFolder([string]$Folder) {
+    $cfg = Join-Path $env:LOCALAPPDATA 'Rebirth2K17\config.json'
+    $h = @{}
+    if (Test-Path $cfg) { $json = Get-Content $cfg -Raw | ConvertFrom-Json; foreach ($pp in $json.PSObject.Properties) { $h[$pp.Name] = $pp.Value }; Copy-Item $cfg "$cfg.before-split" -Force }
+    $h['game_path'] = (Join-Path $Folder 'NBA2K17.exe')
+    if (-not (Test-Path (Split-Path $cfg))) { New-Item -ItemType Directory -Force (Split-Path $cfg) | Out-Null }
+    ($h | ConvertTo-Json -Compress) | Set-Content $cfg -Encoding UTF8
+    Write-Log "Back2Back now points at $Folder\NBA2K17.exe" 'OK'
+}
+
+function Clean-RevivalFolder([string]$Src) {
+    # Take Back2Back's files out of Revival's folder and put the originals back.
+    foreach ($pat in 'b2b17_arena_*.iff', 'rebirth_dinput8.ini') { Get-ChildItem -Path $Src -Filter $pat -File -Force -ErrorAction SilentlyContinue | Remove-Item -Force }
+    $bak = Get-ChildItem (Join-Path $Src '.rebirth2k_backups\native-setup') -Filter 'dinput8.dll.*' -ErrorAction SilentlyContinue | Sort-Object LastWriteTime -Descending | Select-Object -First 1
+    if ($bak) { Copy-Item $bak.FullName (Join-Path $Src 'dinput8.dll') -Force; Write-Log "Restored Revival's dinput8.dll from Back2Back's backup." }
+    foreach ($d in 'cdn', 'store', '.rebirth2k_backups') { $dd = Join-Path $Src $d; if (Test-Path $dd) { Remove-Item $dd -Recurse -Force } }
     $k16 = Join-Path $env:LOCALAPPDATA 'Rebirth2K17\k16_park'
     foreach ($name in '0A', 'manifest') {
-        $orig = Join-Path $k16 "$name.orig"; $cur = Join-Path $src $name
+        $orig = Join-Path $k16 "$name.orig"; $cur = Join-Path $Src $name
         if ((Test-Path $orig) -and (Test-Path $cur)) {
             if ((Get-FileHash -LiteralPath $orig).Hash -ne (Get-FileHash -LiteralPath $cur).Hash) { Copy-Item $orig $cur -Force; Write-Log "Restored the original $name in Revival's folder." }
         }
     }
     Set-HighDpiFlagLikeRevival
-    Write-Log "Revival's folder cleaned: $src" 'OK'
-    Write-Log 'Two things to do by hand now:'
-    Write-Log '  1. Open Back2Back > Settings: "Your game" should show the new -Back2Back folder. Press FIX OTHER CLIENT CONFLICT (Steam restarts), then QUICK CHECK. Set Window Mode to Fullscreen if the picture looks soft.'
-    Write-Log '  2. Start each client once. Each registers its own Steam shortcut (Steam restarts once per client); if Windows asks to allow the game through the firewall, click Allow.'
+    Write-Log "Revival's folder cleaned: $Src" 'OK'
 }
 
 function Get-SplitAdvice {
