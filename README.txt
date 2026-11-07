@@ -22,20 +22,26 @@ WHAT YOU NEED FIRST
    does it for you. If both clients share one folder they overwrite each other's loader files
    on every launch.
 
-INSTALL (2 minutes)
--------------------
+INSTALL (2 minutes, plus a copy of the game if needed)
+-----------------------------------------------------
 1. Unzip this folder somewhere permanent, for example Documents\NBA2K17-Switcher.
    (If Windows blocks a .cmd with "Windows protected your PC": More info > Run anyway.
    Or right-click the zip before unzipping > Properties > tick Unblock.)
-2. If both clients still use the same game folder: close both launchers and run Split.cmd.
-   It copies the game to "<folder>-Back2Back" (5-15 minutes, needs ~70 GB free), points
-   Back2Back at the copy and takes Back2Back's files out of the original.
-   Then open Back2Back > Settings, press FIX OTHER CLIENT CONFLICT, then QUICK CHECK.
-3. Run Install.cmd. It finds Steam, the save folder and both launchers, builds the little
-   "NBA 2K17 Launcher.exe", and asks ONE question: which client did you play last on this PC
-   (R, B, or U if unsure). Answer honestly: that tells it whose saves are in the folder right now.
-   It puts three icons on your desktop:
-     NBA 2K17 Launcher   (the window)     Play Revival / Play Back2Back   (one-click shortcuts)
+2. Close both launchers and run Install.cmd. It finds Steam, the save folder and both launchers,
+   and then:
+   - If both clients still use the same game folder (the normal state after installing both), it
+     offers to fix that on the spot: it copies the game to "<folder>-Back2Back" (5-15 minutes,
+     needs ~70 GB free), points Back2Back at the copy and takes Back2Back's files out of the
+     original. Afterwards open Back2Back > Settings, press FIX OTHER CLIENT CONFLICT, then
+     QUICK CHECK, and start each client once (Steam restarts once per client).
+   - It asks ONE question: which client did you play last on this PC (R, B, or U if unsure).
+     Answer honestly: that tells it whose saves are in the folder right now. If you have been
+     switching by hand and the folder is a mix, answer U: the first click on each tile then parks
+     the mix as a safety copy and lets that client pull its own cloud copy.
+   - It builds the little "NBA 2K17 Launcher.exe" and puts the icons on your desktop:
+       NBA 2K17 Launcher   (the window)     Play Revival / Play Back2Back   (one-click shortcuts)
+   The window does all of the same on its first start, so opening NBA2K17-Launcher.ps1 directly
+   works too. Split.cmd exists only as the manual fallback for the copy step.
 
 EVERY DAY
 ---------

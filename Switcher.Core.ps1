@@ -437,13 +437,21 @@ function Get-StatusInfo {
     return $info
 }
 
-function Invoke-Setup([string]$CurrentClient, [string]$SeedRevival, [string]$SeedBack2Back, [switch]$NoShortcuts) {
+function Invoke-Setup([string]$CurrentClient, [string]$SeedRevival, [string]$SeedBack2Back, [switch]$NoShortcuts, [switch]$SkipSplitOffer) {
     Write-Log "NBA 2K17 Switcher $script:Version - setup"
     $steam = Get-SteamPath
     if (-not $steam) { Fail 'Steam was not found on this PC.' }
     $remote = Find-RemoteFolder $steam
     if (-not $remote) { Fail "No NBA 2K17 save folder found under $steam\userdata. Start the game once through either client, then run setup again." }
     Write-Log "Steam save folder: $remote"
+    if ((Test-SharedGameFolder) -and -not $SkipSplitOffer) {
+        Write-Log "Both clients use the same game folder ($(Get-ClientGameFolder 'Revival')). They overwrite each other's files there on every launch, so Back2Back needs its own copy of the game." 'WARN'
+        if (& $script:AskYesNo 'Give Back2Back its own copy of the game now? (Both launchers and the game must be closed. 5-15 minutes.)') {
+            try { Invoke-Split -Confirmed } catch { Write-Log ($_.Exception.Message -replace '^SWITCHER: ', '') 'WARN'; Write-Log 'Setup continues; run Split.cmd later or click "Split game folder" in the launcher.' 'WARN' }
+        } else {
+            Write-Log 'Skipped. The launcher will keep its tiles off until the split is done (Split.cmd, or "Split game folder" in the window).' 'WARN'
+        }
+    }
     $launchers = @{}
     foreach ($c in 'Revival', 'Back2Back') {
         $exe = Find-Launcher $c
@@ -555,7 +563,7 @@ function Invoke-Play([string]$Target) {
     return @{ started = $true; advice = $advice; switched = $true }
 }
 
-function Invoke-Split([switch]$DryRun) {
+function Invoke-Split([switch]$DryRun, [switch]$Confirmed) {
     Write-Log "NBA 2K17 Switcher $script:Version - give Back2Back its own game folder"
     $rev = Get-ClientGameFolder 'Revival'
     $b2b = Get-ClientGameFolder 'Back2Back'
@@ -585,7 +593,7 @@ function Invoke-Split([switch]$DryRun) {
     Write-Log ("To copy:     {0:N1} GB in {1} files; free space {2:N1} GB" -f ($bytes / 1GB), @($toCopy).Count, ($free / 1GB))
     if ($free -lt ($bytes + 2GB)) { Fail 'Not enough free space on that drive for a second copy of the game.' }
     if ($DryRun) { Write-Log 'Dry run: nothing copied or changed.' 'WARN'; return }
-    if (-not $script:Force) {
+    if (-not $script:Force -and -not $Confirmed) {
         if (-not (& $script:AskYesNo 'Copy the game now? This takes 5-15 minutes.')) { Fail 'Cancelled. Nothing was changed.' }
     }
     $log = Join-Path $script:AppDir 'split-robocopy.log'
@@ -621,4 +629,8 @@ function Invoke-Split([switch]$DryRun) {
     Write-Log 'Two things to do by hand now:'
     Write-Log '  1. Open Back2Back > Settings: "Your game" should show the new -Back2Back folder. Press FIX OTHER CLIENT CONFLICT (Steam restarts), then QUICK CHECK. Set Window Mode to Fullscreen if the picture looks soft.'
     Write-Log '  2. Start each client once. Each registers its own Steam shortcut (Steam restarts once per client); if Windows asks to allow the game through the firewall, click Allow.'
+}
+
+function Get-SplitAdvice {
+    return "Two things to do by hand after the split: in Back2Back open Settings, press FIX OTHER CLIENT CONFLICT (Steam restarts), then QUICK CHECK; and start each client once (Steam restarts once per client; if Windows asks to allow the game through the firewall, click Allow)."
 }

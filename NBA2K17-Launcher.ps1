@@ -383,27 +383,40 @@ function Refresh-View {
             $hintTb.Text = if ($exe) { '' } else { "$c is not installed on this PC." }
         }
         $gameMsg = if ($i.gameRunning) { 'NBA 2K17 is running. Finish the game before switching.' } elseif ($i.current -eq 'Back2Back' -and $i.b2bUpload -eq 'busy') { 'Back2Back is still saving to its cloud. Wait for "Progress saved" before switching.' } else { '' }
-        $enabled = -not $i.gameRunning
+        $enabled = -not $i.gameRunning -and -not $i.shared
         $RevivalTile.IsEnabled = $enabled -and [bool]$i.revivalExe
         $Back2BackTile.IsEnabled = $enabled -and [bool]$i.back2backExe
         $line = "Suited up for: $($i.current)"
         if ($i.lastSwitch) { $line += "   (since $(([datetime]$i.lastSwitch).ToString('ddd HH:mm')))" }
         if ($gameMsg) { $line += "`n$gameMsg" }
-        if ($i.shared) { $line += "`nHeads up: both clients use the SAME game folder. Hit 'Split game folder' once to fix that." }
+        if ($i.shared) { $line += "`nOne-time setup left: both clients still use the SAME game folder. Close both launchers, then hit 'Split game folder' below. The tiles unlock when it's done." }
         $StatusText.Text = $line
     } catch {
         $StatusText.Text = "Could not read the current state: $($_.Exception.Message)"
     }
 }
 
+function Start-SplitConsole {
+    # The split copies the whole game (5-15 minutes), so it runs in its own console window with live progress.
+    Start-Process $script:PowerShellExe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$script:CliScript`" -Split" -WorkingDirectory $script:Root
+    Append-Log 'Split started in a console window. The tiles unlock here as soon as it finishes.'
+}
+
 function Run-Setup {
     $i = Get-StatusInfo
-    $choice = Show-Choice ("The Steam save folder currently holds: $($i.remoteDesc)`n`nWhich client did you play LAST on this PC? (That tells the launcher whose saves these are.)") @('Revival', 'Back2Back', 'Not sure')
+    $splitOffered = $false
+    if ($i.shared) {
+        $c = Show-Choice ("One-time setup first: Revival and Back2Back both use the same game folder`n($($i.revivalGame)).`n`nThey overwrite each other's files there on every launch, so Back2Back needs its own copy of the game. A console window will copy it (5-15 minutes); both launchers and the game must be closed first.") @('Copy it now', 'Later')
+        if ($c -eq 0) { Start-SplitConsole; $splitOffered = $true }
+    }
+    $choice = Show-Choice ("The Steam save folder currently holds: $($i.remoteDesc)`n`nWhich client did you play LAST on this PC? (That tells the launcher whose saves these are. Pick 'Not sure' if you've been switching by hand; each client will then pull its own cloud copy the first time.)") @('Revival', 'Back2Back', 'Not sure')
     if ($choice -lt 0) { return }
     $cur = @('Revival', 'Back2Back', 'Unknown')[$choice]
     try {
-        [void](Invoke-Setup -CurrentClient $cur)
-        [System.Windows.MessageBox]::Show($window, "All set. Suited up for: $cur.`n`nFrom now on just click a tile.", 'NBA 2K17 Launcher', 'OK', 'Information') | Out-Null
+        [void](Invoke-Setup -CurrentClient $cur -SkipSplitOffer)
+        $msg = "All set. Suited up for: $cur.`n`nFrom now on just click a tile."
+        if ($splitOffered) { $msg = "Saves and icons are set up. When the console window says the copy is done:`n`n" + (Get-SplitAdvice) + "`n`nThe tiles unlock by themselves once the folders are separate." }
+        [System.Windows.MessageBox]::Show($window, $msg, 'NBA 2K17 Launcher', 'OK', 'Information') | Out-Null
     } catch {
         [System.Windows.MessageBox]::Show($window, ($_.Exception.Message -replace '^SWITCHER: ', ''), 'NBA 2K17 Launcher', 'OK', 'Error') | Out-Null
     }
@@ -436,7 +449,7 @@ $SetupButton.Add_Click({ Run-Setup })
 $SplitButton.Add_Click({
     if (Test-SharedGameFolder) {
         $ok = [System.Windows.MessageBox]::Show($window, "This copies the whole game folder (5-15 minutes) so Back2Back gets its own copy, then points Back2Back at it. Both launchers and the game must be closed.`n`nA console window will show progress. Start now?", 'NBA 2K17 Launcher', 'YesNo', 'Question')
-        if ($ok -eq 'Yes') { Start-Process $script:PowerShellExe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -File `"$script:CliScript`" -Split" }
+        if ($ok -eq 'Yes') { Start-SplitConsole; [System.Windows.MessageBox]::Show($window, (Get-SplitAdvice), 'NBA 2K17 Launcher', 'OK', 'Information') | Out-Null }
     } else {
         [System.Windows.MessageBox]::Show($window, "Already split: Revival and Back2Back use different game folders. Nothing to do.", 'NBA 2K17 Launcher', 'OK', 'Information') | Out-Null
     }
