@@ -2,7 +2,7 @@
 # Dot-source this file; then set $script:Say / $script:AskYesNo / $script:AskThree if you want output and questions
 # to go somewhere other than the console.
 
-$script:Version = '2.1'
+$script:Version = '2.2'
 $script:Root = $PSScriptRoot
 $script:UpdateConfig = Join-Path $PSScriptRoot 'update.json'
 $script:AppDir = Join-Path $script:Root 'data'
@@ -283,6 +283,18 @@ function New-AppIcon([string]$Path) {
     $bw.Close(); $bmp.Dispose()
 }
 
+function Test-SmartAppControlOn {
+    # Windows 11's Smart App Control refuses to run unsigned programs such as our locally built exe.
+    # (1 = on, 2 = evaluation, 0 = off). When it is on, the desktop icon opens the window through PowerShell instead.
+    try { $v = (Get-ItemProperty 'HKLM:\SYSTEM\CurrentControlSet\Control\CI\Policy' -ErrorAction Stop).VerifiedAndReputablePolicyState; return ($v -eq 1) } catch { return $false }
+}
+
+function Get-LauncherShortcutTarget {
+    # Returns @{ target; args; workdir } for a desktop shortcut that opens the launcher window.
+    if ((Test-Path $script:ExePath) -and -not (Test-SmartAppControlOn)) { return @{ target = $script:ExePath; args = ''; workdir = $script:Root } }
+    return @{ target = $script:PowerShellExe; args = "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$script:GuiScript`""; workdir = $script:Root }
+}
+
 function Build-LauncherExe {
     # Compiles the tiny "NBA 2K17 Launcher.exe" stub with the C# compiler that ships with Windows.
     $src = Join-Path $script:Root 'Launcher\NBA2K17Launcher.cs'
@@ -457,9 +469,10 @@ function Invoke-Setup([string]$CurrentClient, [string]$SeedRevival, [string]$See
     Set-HighDpiFlagLikeRevival
     if (-not $NoShortcuts) {
         if (-not (Test-Path $script:IconPath)) { New-AppIcon $script:IconPath }
-        $exe = Build-LauncherExe
-        if ($exe) { New-DesktopShortcut 'NBA 2K17 Launcher' $exe '' $script:IconPath $script:Root }
-        else { New-DesktopShortcut 'NBA 2K17 Launcher' $script:PowerShellExe "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$script:GuiScript`"" $script:IconPath $script:Root }
+        if (Test-SmartAppControlOn) { Write-Log 'Smart App Control is on: Windows will not run the unsigned launcher exe, so the desktop icon opens the window through PowerShell instead.' 'WARN' }
+        else { [void](Build-LauncherExe) }
+        $t = Get-LauncherShortcutTarget
+        New-DesktopShortcut 'NBA 2K17 Launcher' $t.target $t.args $script:IconPath $t.workdir
         New-DesktopShortcut 'Play Revival' $script:PowerShellExe "-NoProfile -ExecutionPolicy Bypass -File `"$script:CliScript`" -Play Revival" $launchers['Revival'] $script:Root
         New-DesktopShortcut 'Play Back2Back' $script:PowerShellExe "-NoProfile -ExecutionPolicy Bypass -File `"$script:CliScript`" -Play Back2Back" $launchers['Back2Back'] $script:Root
         $old = Join-Path ([Environment]::GetFolderPath('Desktop')) 'NBA2K17 Switcher Status.lnk'; if (Test-Path $old) { Remove-Item $old -Force }

@@ -482,8 +482,8 @@ $UpdateButton.Add_Click({
     try {
         [void](Invoke-Update $u.url $u.latest)
         [System.Windows.MessageBox]::Show($window, "Updated to version $($u.latest). The launcher will now restart.", 'NBA 2K17 Launcher', 'OK', 'Information') | Out-Null
-        if (Test-Path $script:ExePath) { Start-Process $script:ExePath -WorkingDirectory $script:Root }
-        else { Start-Process $script:PowerShellExe -ArgumentList "-NoProfile -ExecutionPolicy Bypass -STA -WindowStyle Hidden -File `"$script:GuiScript`"" -WorkingDirectory $script:Root }
+        $t = Get-LauncherShortcutTarget
+        if ($t.args) { Start-Process $t.target -ArgumentList $t.args -WorkingDirectory $t.workdir } else { Start-Process $t.target -WorkingDirectory $t.workdir }
         $window.Close()
     } catch {
         $msg = $_.Exception.Message -replace '^SWITCHER: ', ''

@@ -83,6 +83,9 @@ IF SOMETHING GOES WRONG
   the game and both launchers, empty the Steam save folder, unzip the set you want into it, then
   click "Set up again" and answer the question with that client.
 - The exe won't build (no C# compiler): the desktop icon opens the window directly instead.
+- "Your device blocked it" / "This app has been blocked": Windows 11's Smart App Control refuses unsigned
+  programs, and the locally built exe is unsigned. Run Install.cmd again: when that feature is on, the
+  desktop icon is made to open the window through PowerShell, which still works.
 
 UPDATES
 -------
