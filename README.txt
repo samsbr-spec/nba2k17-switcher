@@ -19,7 +19,7 @@ STARTING FROM SCRATCH (the smooth order)
 2. Install Revival, sign in, add NBA 2K17 (point it at NBA2K17.exe in your game folder).
 3. Unzip this launcher and run Install.cmd. It sees Revival's game folder and no Back2Back yet,
    and offers to prepare Back2Back's own copy of the game right away ("<folder>-Back2Back",
-   5-15 minutes, ~70 GB free needed). Say yes. It also puts the icons on your desktop.
+   5-15 minutes, ~70 GB free needed). Say yes. It also puts the launcher icon on your desktop.
 4. Install Back2Back, sign in with Steam, link Discord and join their server. When it asks for the
    game, pick NBA2K17.exe inside the "-Back2Back" folder. Its checklist is green from the start.
    Then click "Re-run setup" in the launcher window (or run Install.cmd again).
@@ -52,12 +52,15 @@ INSTALL (2 minutes, plus a copy of the game if needed)
      needs ~70 GB free), points Back2Back at the copy and takes Back2Back's files out of the
      original. Afterwards open Back2Back > Settings, press FIX OTHER CLIENT CONFLICT, then
      QUICK CHECK, and start each client once (Steam restarts once per client).
-   - It asks ONE question: which client did you play last on this PC (R, B, or U if unsure).
-     Answer honestly: that tells it whose saves are in the folder right now. If you have been
-     switching by hand and the folder is a mix, answer U: the first click on each tile then parks
-     the mix as a safety copy and lets that client pull its own cloud copy.
-   - It builds the little "NBA 2K17 Launcher.exe" and puts the icons on your desktop:
-       NBA 2K17 Launcher   (the window)     Play Revival / Play Back2Back   (one-click shortcuts)
+   - It works out whose saves are in the Steam folder right now. Revival keeps a record of the
+     set it last synced, so if the folder matches that, they are Revival's and nothing is asked.
+     Otherwise it asks ONE question: which client did you play last on this PC (R, B, or U if
+     unsure). Answer honestly. Answer U only if you really can't tell: the first click on a tile
+     then parks what is there as a safety copy and starts that client on an empty folder.
+     Back2Back refills an empty folder from its cloud. Revival only does that on a PC it has
+     never synced on; otherwise the launcher warns you before it starts Revival without saves.
+   - It builds the little "NBA 2K17 Launcher.exe" and puts one icon on your desktop:
+       NBA 2K17 Launcher   (the window with both tiles)
    The window does all of the same on its first start, so opening NBA2K17-Launcher.ps1 directly
    works too. Split.cmd exists only as the manual fallback for the copy step.
 
@@ -66,10 +69,9 @@ EVERY DAY
 Open "NBA 2K17 Launcher" and click REVIVAL or BACK2BACK. The window shows whose saves are in
 place, what is parked, and a log of what it just did. Then press Play in the client as usual.
 The tiles grey out while the game is running or while Back2Back is still saving to its cloud.
-"Play Revival" / "Play Back2Back" on the desktop do the same thing without the window.
 
 Habits that keep it bulletproof:
-- Always start the game through the launcher (or the two shortcuts).
+- Always start the game through the launcher, never through the clients' own desktop icons.
 - Quit the game normally. After Back2Back, wait for its launcher to say "Progress saved".
 - If you also play Revival on another device: press Play in Revival once before you switch away
   from it. Revival only uploads your saves at Play, never when the game closes.
@@ -101,6 +103,10 @@ IF SOMETHING GOES WRONG
 - "Back2Back is still saving to its cloud": wait for "Progress saved" in its launcher, try again.
 - "No parked saves for X yet": first time for that client on this PC. The folder is left empty and
   the client downloads its own cloud copy. If it asks, choose Cloud.
+- Revival starts with no careers: quit right away and do NOT press Play in Revival again (Play
+  uploads whatever is in the folder, so it would put the empty set over your cloud saves). Open
+  the launcher and click REVIVAL: if your saves are still parked (data\parking\Unknown_...), it
+  offers to put them back. If it has no copy, restore a set from data\history\ as described below.
 - You switched by hand or something looks off: the launcher warns you when the folder does not
   look like the saves it expected and lets you cancel.
 - Need an older set back: the zips in data\history\ hold every outgoing set, newest first. Close
@@ -124,7 +130,7 @@ the zip onto it. Everyone's launcher offers the update the next time it opens.
 
 UNINSTALL
 ---------
-Delete the desktop icons and the NBA2K17-Switcher folder (take anything you want from
+Delete the desktop icon and the NBA2K17-Switcher folder (take anything you want from
 data\parking\ first). Nothing else was changed on the PC.
 
 MANUAL SPLIT (if you would rather not run Split.cmd)

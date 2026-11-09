@@ -82,6 +82,12 @@ function Show-Status {
 try {
     if ($Setup) {
         $cur = $Current
+        # Only ask whose saves are in the folder when that cannot be told: Revival keeps a record of the set it last synced.
+        if (-not $cur) {
+            $guess = Get-SaveOwnerGuess (Get-StatusInfo).remote
+            if ($guess -eq 'Revival') { $cur = 'Revival'; Write-Host 'The saves in the Steam folder are the ones Revival last synced on this PC, so they are Revival''s. No question needed.' -ForegroundColor Green }
+            elseif ($guess -eq 'Empty') { $cur = 'Unknown' }
+        }
         if (-not $cur -and $interactive) {
             $i = Get-StatusInfo
             Write-Host ("The Steam save folder currently holds: {0}" -f $i.remoteDesc)

@@ -425,13 +425,20 @@ function Run-Setup {
     } elseif ($i.plan.kind -eq 'wait') {
         [System.Windows.MessageBox]::Show($window, $i.plan.note, 'NBA 2K17 Launcher', 'OK', 'Information') | Out-Null
     }
-    $choice = Show-Choice ("The Steam save folder currently holds: $($i.remoteDesc)`n`nWhich client did you play LAST on this PC? (That tells the launcher whose saves these are. Pick 'Not sure' if you've been switching by hand; each client will then pull its own cloud copy the first time.)") @('Revival', 'Back2Back', 'Not sure')
-    if ($choice -lt 0) { return }
-    $cur = @('Revival', 'Back2Back', 'Unknown')[$choice]
+    # Only ask whose saves are in the folder when that cannot be told: Revival keeps a record of the set it last synced.
+    $guess = Get-SaveOwnerGuess $i.remote
+    if ($guess -eq 'Revival') { $cur = 'Revival'; Append-Log "The saves in the Steam folder are the ones Revival last synced on this PC, so they are Revival's. No question needed." }
+    elseif ($guess -eq 'Empty') { $cur = 'Unknown' }
+    else {
+        $choice = Show-Choice ("The Steam save folder currently holds: $($i.remoteDesc)`n`nWhich client did you play LAST on this PC? (That tells the launcher whose saves these are. Pick 'Not sure' only if you really can't tell: the launcher then parks these saves as a safety copy and starts each client on an empty folder.)") @('Revival', 'Back2Back', 'Not sure')
+        if ($choice -lt 0) { return }
+        $cur = @('Revival', 'Back2Back', 'Unknown')[$choice]
+    }
     try {
-        [void](Invoke-Setup -CurrentClient $cur -SkipSplitOffer)
-        $msg = "All set. Suited up for: $cur.`n`nFrom now on just click a tile."
-        if ($splitOffered) { $msg = "Saves and icons are set up. When the console window says the copy is done:`n`n" + (Get-SplitAdvice) + "`n`nThe tiles unlock by themselves once the folders are separate." }
+        $st = Invoke-Setup -CurrentClient $cur -SkipSplitOffer
+        if ($st -and $st.current) { $cur = $st.current }
+        $msg = if ($cur -eq 'Unknown') { "All set.`n`nFrom now on just click a tile." } else { "All set. Suited up for: $cur.`n`nFrom now on just click a tile." }
+        if ($splitOffered) { $msg = "Saves and the desktop icon are set up. When the console window says the copy is done:`n`n" + (Get-SplitAdvice) + "`n`nThe tiles unlock by themselves once the folders are separate." }
         [System.Windows.MessageBox]::Show($window, $msg, 'NBA 2K17 Launcher', 'OK', 'Information') | Out-Null
     } catch {
         [System.Windows.MessageBox]::Show($window, ($_.Exception.Message -replace '^SWITCHER: ', ''), 'NBA 2K17 Launcher', 'OK', 'Error') | Out-Null

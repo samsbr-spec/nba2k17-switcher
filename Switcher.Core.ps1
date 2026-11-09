@@ -2,7 +2,7 @@
 # Dot-source this file; then set $script:Say / $script:AskYesNo / $script:AskThree if you want output and questions
 # to go somewhere other than the console.
 
-$script:Version = '2.2'
+$script:Version = '2.3'
 $script:Root = $PSScriptRoot
 $script:UpdateConfig = Join-Path $PSScriptRoot 'update.json'
 $script:AppDir = Join-Path $script:Root 'data'
@@ -159,6 +159,16 @@ function Get-Signature([string]$Dir) {
     return $sig
 }
 
+# Small files the game writes with the same bytes for both clients. They say nothing about whose saves a folder holds.
+$script:SharedSaveFiles = 'CreatedPlayers', 'RosterDescriptions', 'UserDataTattoos'
+
+function Get-DistinctSignature([string]$Dir) {
+    # Get-Signature without the files both clients have in common.
+    $sig = Get-Signature $Dir
+    foreach ($n in $script:SharedSaveFiles) { $sig.Remove($n) }
+    return $sig
+}
+
 function Count-Identical([hashtable]$A, [hashtable]$B) {
     $n = 0
     foreach ($k in $A.Keys) { if ($B.ContainsKey($k) -and $B[$k] -eq $A[$k]) { $n++ } }
@@ -199,6 +209,71 @@ function Describe-Folder([string]$Dir) {
     $newest = ($files | Sort-Object LastWriteTime -Descending | Select-Object -First 1).LastWriteTime
     $careers = @($files | Where-Object { $_.Name -like 'MyCAREER*' } | ForEach-Object { $_.Name })
     return ("{0} files, newest {1:yyyy-MM-dd HH:mm}, careers: {2}" -f $files.Count, $newest, $(if ($careers.Count) { $careers -join ' ' } else { 'none' }))
+}
+
+# ---------------------------------------------------------------- recognising Revival's saves
+
+function Get-RevivalRecord([string]$Remote) {
+    # Revival writes .revival_sync.json next to the Steam save folder after every upload or restore: the exact files
+    # (name + sha256) of the set it last synced on this PC. Returns @{ name = HASH } or $null when there is none.
+    if (-not $Remote) { return $null }
+    $p = Join-Path (Split-Path $Remote) '.revival_sync.json'
+    if (-not (Test-Path -LiteralPath $p)) { return $null }
+    try {
+        $rec = @{}
+        foreach ($f in (Get-Content -LiteralPath $p -Raw | ConvertFrom-Json).files) {
+            if ($f.name -and $f.sha256) { $rec[[string]$f.name] = ([string]$f.sha256).ToUpper() }
+        }
+        if ($rec.Count -gt 0) { return $rec }
+    } catch {}
+    return $null
+}
+
+function Test-RevivalSet([string]$Dir, [hashtable]$Record) {
+    # True when $Dir holds the set Revival last synced: every recorded file is there, byte for byte. Three small files
+    # (CreatedPlayers, RosterDescriptions, UserDataTattoos) can be identical for both clients, so they never count alone.
+    if (-not $Record -or $Record.Count -eq 0) { return $false }
+    $sig = Get-Signature $Dir
+    if ($sig.Count -eq 0 -or (Count-Identical $Record $sig) -ne $Record.Count) { return $false }
+    return (@($Record.Keys | Where-Object { $_ -notin $script:SharedSaveFiles }).Count -gt 0)
+}
+
+function Get-SaveOwnerGuess([string]$Remote) {
+    # What the Steam save folder holds, as far as that can be told without asking: 'Empty', 'Revival' or $null (ask).
+    if (-not $Remote -or (Get-Entries $Remote).Count -eq 0) { return 'Empty' }
+    if (Test-RevivalSet $Remote (Get-RevivalRecord $Remote)) { return 'Revival' }
+    return $null
+}
+
+function Find-ParkedRevivalSet([string]$Remote) {
+    # Looks through the "Unknown" sets parked by earlier switches for the one Revival last synced. Returns its folder or $null.
+    $rec = Get-RevivalRecord $Remote
+    if (-not $rec) { return $null }
+    foreach ($d in (Get-ChildItem $script:ParkingRoot -Directory -Filter 'Unknown_*' -ErrorAction SilentlyContinue | Sort-Object Name -Descending)) {
+        $r = Join-Path $d.FullName 'remote'
+        if (Test-RevivalSet $r $rec) { return $r }
+    }
+    return $null
+}
+
+function Repair-BlankRevivalFolder([string]$Remote) {
+    # Version 2.2 could start Revival on an empty folder while its saves sat parked as "Unknown"; the game then made a
+    # blank set. If the folder has no careers and that parked set is still there, offer to put it back.
+    if (@(Get-Entries $Remote | Where-Object { $_.Name -like 'MyCAREER*' }).Count -gt 0) { return }
+    $found = Find-ParkedRevivalSet $Remote
+    if (-not $found -or @(Get-Entries $found | Where-Object { $_.Name -like 'MyCAREER*' }).Count -eq 0) { return }
+    $desc = Describe-Folder $found
+    Write-Log "The Steam save folder has no careers, but Revival's last synced saves are parked on this PC ($desc)." 'WARN'
+    if (-not (& $script:AskYesNo "Revival's careers are missing from the Steam save folder, but the launcher still has them parked ($desc). Put them back before starting Revival?")) {
+        Write-Log 'Left the Steam save folder as it is.' 'WARN'
+        return
+    }
+    $stamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
+    $zip = Join-Path $script:HistoryDir "Revival-blank_$stamp.zip"
+    if (Zip-Contents $Remote $zip) { Write-Log "Safety copy of the blank set: $(Split-Path $zip -Leaf)" }
+    Reset-Folder $Remote
+    Copy-Contents $found $Remote
+    Write-Log "Put Revival's saves back in place ($((Get-Entries $Remote).Count) files)." 'OK'
 }
 
 # ---------------------------------------------------------------- Back2Back's post-game cloud save
@@ -247,6 +322,20 @@ function New-DesktopShortcut([string]$Name, [string]$TargetPath, [string]$Argume
     $lnk.WorkingDirectory = $WorkDir
     if ($IconPath -and (Test-Path $IconPath)) { $lnk.IconLocation = "$IconPath,0" }
     $lnk.Save()
+}
+
+function Remove-OldPlayShortcuts {
+    # Versions up to 2.2 also put "Play Revival" / "Play Back2Back" on the desktop. The launcher window is the
+    # one way in now, so take those away again. Only shortcuts that point at this tool are touched.
+    $desktop = [Environment]::GetFolderPath('Desktop')
+    $ws = New-Object -ComObject WScript.Shell
+    foreach ($name in 'Play Revival', 'Play Back2Back') {
+        $p = Join-Path $desktop "$name.lnk"
+        if (-not (Test-Path -LiteralPath $p)) { continue }
+        try {
+            if (($ws.CreateShortcut($p)).Arguments -like '*NBA2K17-Switcher.ps1*') { Remove-Item -LiteralPath $p -Force; Write-Log "Removed the old `"$name`" desktop icon (the launcher window replaces it)." }
+        } catch {}
+    }
 }
 
 function New-AppIcon([string]$Path) {
@@ -489,11 +578,16 @@ function Invoke-Setup([string]$CurrentClient, [string]$SeedRevival, [string]$See
     $cur = $CurrentClient
     if (-not $cur) { $cur = 'Unknown' }
     if ((Get-Entries $remote).Count -eq 0) { $cur = 'Unknown'; Write-Log 'The Steam save folder is empty (nothing played yet), so there is nothing to park: each client fills it on its first launch.' }
+    elseif ($cur -ne 'Revival' -and (Get-SaveOwnerGuess $remote) -eq 'Revival') {
+        # Revival's own record settles it, whatever was answered: these are byte for byte the files it last synced here.
+        Write-Log "The saves in the Steam folder are exactly the ones Revival last synced on this PC, so they are kept as Revival's." 'OK'
+        $cur = 'Revival'
+    }
     if ($cur -ne 'Unknown') {
         $slot = Join-Path $script:ParkingRoot "$cur\remote"
         if ((Get-Entries $remote).Count -gt 0) { Reset-Folder $slot; Copy-Contents $remote $slot; Write-Log "Took a copy of the current saves as $cur's parked set." }
     } else {
-        Write-Log 'Current saves marked as unknown: the first switch parks them under parking\Unknown_<date> and leaves the folder empty for the launched client to fill from its cloud.' 'WARN'
+        Write-Log 'Current saves marked as unknown: the first switch parks them under parking\Unknown_<date> as a safety copy and starts the launched client on an empty folder.' 'WARN'
     }
     $state = @{ version = $script:Version; steamPath = $steam; remote = $remote; current = $cur; lastSwitch = (Get-Date).ToString('s'); setupAt = (Get-Date).ToString('s'); revivalExe = $launchers['Revival']; back2backExe = $launchers['Back2Back'] }
     Save-State $state
@@ -504,10 +598,9 @@ function Invoke-Setup([string]$CurrentClient, [string]$SeedRevival, [string]$See
         else { [void](Build-LauncherExe) }
         $t = Get-LauncherShortcutTarget
         New-DesktopShortcut 'NBA 2K17 Launcher' $t.target $t.args $script:IconPath $t.workdir
-        New-DesktopShortcut 'Play Revival' $script:PowerShellExe "-NoProfile -ExecutionPolicy Bypass -File `"$script:CliScript`" -Play Revival" $launchers['Revival'] $script:Root
-        New-DesktopShortcut 'Play Back2Back' $script:PowerShellExe "-NoProfile -ExecutionPolicy Bypass -File `"$script:CliScript`" -Play Back2Back" $launchers['Back2Back'] $script:Root
+        Remove-OldPlayShortcuts
         $old = Join-Path ([Environment]::GetFolderPath('Desktop')) 'NBA2K17 Switcher Status.lnk'; if (Test-Path $old) { Remove-Item $old -Force }
-        Write-Log 'Desktop icons created: "NBA 2K17 Launcher", "Play Revival", "Play Back2Back".' 'OK'
+        Write-Log 'Desktop icon created: "NBA 2K17 Launcher".' 'OK'
     }
     Write-Log "Setup done. Saves in place for: $cur" 'OK'
     if (Test-SharedGameFolder) {
@@ -530,11 +623,16 @@ function Invoke-Play([string]$Target) {
     $advice = if ($Target -eq 'Revival') { 'Press Play in Revival. If it asks Cloud or Local, pick the side you played most recently (one PC only: Local).' } else { 'Press Play in Back2Back. When you finish, quit the game and wait for "Progress saved" before switching.' }
 
     $current = $state.current
+    if ($current -eq 'Unknown' -and (Get-SaveOwnerGuess $remote) -eq 'Revival') {
+        Write-Log "The saves in the Steam folder are exactly the ones Revival last synced on this PC, so they are kept as Revival's." 'OK'
+        $current = 'Revival'
+    }
+    if ($current -eq 'Revival' -and $Target -eq 'Revival') { Repair-BlankRevivalFolder $remote }
     if ($current -ne $Target) {
         $live = Get-Signature $remote
         if ($live.Count -gt 0 -and $current -ne 'Unknown') {
-            $scores = @{}
-            foreach ($c in 'Revival', 'Back2Back') { $scores[$c] = Count-Identical $live (Get-Signature (Join-Path $script:ParkingRoot "$c\remote")) }
+            $scores = @{}; $liveDistinct = Get-DistinctSignature $remote
+            foreach ($c in 'Revival', 'Back2Back') { $scores[$c] = Count-Identical $liveDistinct (Get-DistinctSignature (Join-Path $script:ParkingRoot "$c\remote")) }
             if ($scores[$Target] -gt $scores[$current] -and $scores[$Target] -ge 3) {
                 Write-Log "The folder looks like $Target's saves, but the switcher expected $current's. Did you copy files by hand?" 'WARN'
                 if (-not $script:Force) {
@@ -557,6 +655,24 @@ function Invoke-Play([string]$Target) {
 
     if ($current -eq 'Back2Back') { Wait-ForBack2BackUpload }
 
+    $incoming = Join-Path $script:ParkingRoot "$Target\remote"
+    $revivalHasNoCopy = $false
+    if ($Target -eq 'Revival' -and (Get-Entries $incoming).Count -eq 0) {
+        # Nothing parked for Revival. An "Unknown" set parked earlier may be its saves; otherwise there is no copy on this
+        # PC, and Revival does not refill an empty folder when it believes this PC is already in sync with its cloud.
+        $found = Find-ParkedRevivalSet $remote
+        if ($found) {
+            Copy-Contents $found $incoming
+            Write-Log "Found Revival's last synced saves among the parked sets ($(Split-Path (Split-Path $found) -Leaf)); using them." 'OK'
+        } elseif (Get-RevivalRecord $remote) {
+            $revivalHasNoCopy = $true
+            Write-Log "No copy of Revival's saves on this PC. Revival has synced here before, so it will probably not download them into an empty folder by itself." 'WARN'
+            if (-not $script:Force) {
+                if (-not (& $script:AskYesNo "There is no copy of Revival's saves on this PC, and Revival will probably NOT download them by itself (it thinks this PC is already up to date). The game may start with no careers. If it does: quit right away and do not press Play in Revival again, because that uploads the empty set over your cloud saves. Start Revival anyway?")) { Fail 'Cancelled. Nothing was changed.' }
+            }
+        }
+    }
+
     $stamp = Get-Date -Format 'yyyy-MM-dd_HH-mm-ss'
     $outgoingName = if ($current -eq 'Unknown') { "Unknown_$stamp" } else { $current }
     $live = Get-Signature $remote
@@ -568,11 +684,13 @@ function Invoke-Play([string]$Target) {
     } else {
         Write-Log 'The Steam save folder was empty; nothing to park.'
     }
-    $incoming = Join-Path $script:ParkingRoot "$Target\remote"
     $n = (Get-Entries $incoming).Count
     if ($n -gt 0) {
         Copy-Contents $incoming $remote
         Write-Log "Put $Target's saves in place ($n files)." 'OK'
+    } elseif ($revivalHasNoCopy) {
+        Write-Log 'The folder is left empty. If Revival shows no careers, quit right away and do not press Play again: that would upload the empty set.' 'WARN'
+        $advice = 'No copy of Revival''s saves on this PC. If the game shows no careers, quit right away and do NOT press Play again (that uploads the empty set).'
     } else {
         Write-Log "No parked saves for $Target yet. The folder is left empty so $Target can download its own cloud copy; if it asks, choose Cloud." 'WARN'
         $advice = "No parked saves for $Target yet: it should download its cloud copy. If it asks Cloud or Local, choose Cloud."
